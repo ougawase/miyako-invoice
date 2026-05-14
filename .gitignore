@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.env
+template_請求書.xlsx
+sample_nouhin_*.xlsx
+create_sample.py
+.claude/
