@@ -163,6 +163,9 @@ def create_invoice(store_name, all_items, billing_month, billing_subject, delive
     wb = openpyxl.load_workbook(load_template())
     ws = wb.active
 
+    # 開いた時に必ず数式を再計算させる（合計額が反映されないバグの修正）
+    wb.calculation.fullCalcOnLoad = True
+
     # 宛先・日付・件名
     ws["A3"] = store_name
     ws["N4"] = date.today()
@@ -171,11 +174,12 @@ def create_invoice(store_name, all_items, billing_month, billing_subject, delive
     reiwa = date.today().year - 2018
     ws["C6"] = f"令和{reiwa}年{billing_month}{billing_subject}"
 
-    # 明細を一度クリア（行18〜33のA・B・J列）
+    # 明細を一度クリア（行18〜33のA・B・J・K列）
     for r in range(ITEM_START_ROW, ITEM_END_ROW + 1):
-        ws.cell(row=r, column=1).value = None  # A: 日付
-        ws.cell(row=r, column=2).value = None  # B: 商品名
-        ws.cell(row=r, column=10).value = None # J: 数量
+        ws.cell(row=r, column=1).value = None   # A: 日付
+        ws.cell(row=r, column=2).value = None   # B: 商品名
+        ws.cell(row=r, column=10).value = None  # J: 数量
+        ws.cell(row=r, column=11).value = None  # K: 単位
 
     # 商品をまとめる（同じ商品は合算）
     merged = {}
@@ -183,27 +187,27 @@ def create_invoice(store_name, all_items, billing_month, billing_subject, delive
         k = item["name"]
         if k in merged:
             merged[k]["quantity"] += item["quantity"]
-            merged[k]["amount"] += item["amount"]
+            merged[k]["amount"]   += item["amount"]
         else:
             merged[k] = dict(item)
 
-    # 日付文字列を作る（例: "5月4日"）
-    date_label = ""
-    if delivery_dates:
-        d = delivery_dates[0]
+    # 日付文字列（例: "5月4日"）・複数日ある場合は全て表示
+    date_labels = []
+    for d in delivery_dates:
         if isinstance(d, datetime):
-            date_label = f"{d.month}月{d.day}日"
+            date_labels.append(f"{d.month}月{d.day}日")
+    date_label = "・".join(date_labels) if date_labels else ""
 
-    # 明細を書き込む（B列=商品名, J列=数量 → L列とO列の数式が自動計算）
+    # 明細を書き込む
     for i, item in enumerate(merged.values()):
         r = ITEM_START_ROW + i
         if r > ITEM_END_ROW:
             break
         if i == 0:
-            ws.cell(row=r, column=1).value = date_label  # A列: 納品日
-        ws.cell(row=r, column=2).value = item["name"]    # B列: 商品名
+            ws.cell(row=r, column=1).value = date_label   # A列: 納品日
+        ws.cell(row=r, column=2).value  = item["name"]    # B列: 商品名
         ws.cell(row=r, column=10).value = item["quantity"] # J列: 数量
-        ws.cell(row=r, column=11).value = "個"           # K列: 単位
+        ws.cell(row=r, column=11).value = "個"            # K列: 単位
 
     buf = io.BytesIO()
     wb.save(buf)
