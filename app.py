@@ -23,10 +23,98 @@ TAX_RATE = 0.08
 ITEM_START_ROW = 18
 ITEM_END_ROW = 33
 
-st.set_page_config(page_title="新家 請求書自動生成", page_icon="📄", layout="centered")
-st.title("📄 納品書 → 請求書 自動生成")
-st.caption("株式会社 新家｜納品書をアップロードするだけで請求書を自動作成")
-st.divider()
+st.set_page_config(page_title="請求書作成 | 株式会社 新家", layout="centered")
+
+st.markdown("""
+<style>
+    /* フォント・背景 */
+    html, body, [class*="css"] {
+        font-family: 'Hiragino Kaku Gothic Pro', 'Noto Sans JP', sans-serif;
+        background-color: #f8f8f6;
+    }
+    /* ヘッダー */
+    .app-header {
+        padding: 2.5rem 0 1.5rem 0;
+        border-bottom: 2px solid #1a1a1a;
+        margin-bottom: 2rem;
+    }
+    .app-header h1 {
+        font-size: 1.4rem;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        color: #1a1a1a;
+        margin: 0;
+    }
+    .app-header p {
+        font-size: 0.8rem;
+        color: #888;
+        margin: 0.3rem 0 0 0;
+        letter-spacing: 0.03em;
+    }
+    /* セクションラベル */
+    .section-label {
+        font-size: 0.7rem;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: #888;
+        margin-bottom: 0.5rem;
+    }
+    /* 確認テーブルヘッダー */
+    .confirm-header {
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: #1a1a1a;
+        padding: 0.8rem 0;
+        border-bottom: 1px solid #e0e0e0;
+        margin-bottom: 1rem;
+    }
+    /* 金額ハイライト */
+    .total-amount {
+        font-size: 1.1rem;
+        font-weight: 700;
+        color: #1a1a1a;
+    }
+    /* ボタン上書き */
+    .stButton > button {
+        background-color: #1a1a1a;
+        color: white;
+        border: none;
+        border-radius: 2px;
+        font-size: 0.85rem;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        padding: 0.7rem 1.5rem;
+    }
+    .stButton > button:hover {
+        background-color: #333;
+    }
+    /* アップローダー */
+    [data-testid="stFileUploader"] {
+        border: 1px solid #d0d0d0;
+        border-radius: 2px;
+        background: white;
+    }
+    /* expander */
+    [data-testid="stExpander"] {
+        border: 1px solid #e0e0e0;
+        border-radius: 2px;
+        background: white;
+    }
+    /* 入力フィールド */
+    input[type="text"] {
+        border-radius: 2px;
+        border: 1px solid #d0d0d0;
+    }
+    /* フッター非表示 */
+    footer { visibility: hidden; }
+</style>
+
+<div class="app-header">
+    <h1>請求書作成システム</h1>
+    <p>株式会社 新家 / 納品書から請求書を自動生成します</p>
+</div>
+""", unsafe_allow_html=True)
 
 
 def read_nouhinshо(file_bytes):
@@ -124,26 +212,30 @@ def create_invoice(store_name, all_items, billing_month, delivery_dates):
 
 # ---- UI ----
 
-col1, col2 = st.columns(2)
-with col1:
-    reiwa_now = date.today().year - 2018
-    billing_month = st.text_input("請求月（件名に使用）", value=f"{reiwa_now}年{date.today().month}月分")
-with col2:
-    st.write("")
-    st.caption("例: 8年5月分　→　件名「令和8年5月分味噌加工品代金」")
+st.markdown('<p class="section-label">請求月</p>', unsafe_allow_html=True)
+reiwa_now = date.today().year - 2018
+billing_month = st.text_input(
+    "請求月",
+    value=f"{reiwa_now}年{date.today().month}月分",
+    label_visibility="collapsed"
+)
+st.caption(f"件名: 令和{reiwa_now}年{date.today().month}月分味噌加工品代金")
 
+st.write("")
+st.markdown('<p class="section-label">納品書ファイル</p>', unsafe_allow_html=True)
 uploaded_files = st.file_uploader(
-    "納品書Excelをアップロード（複数可）",
+    "納品書ファイル",
     type=["xlsx", "xls"],
-    accept_multiple_files=True
+    accept_multiple_files=True,
+    label_visibility="collapsed"
 )
 
 if uploaded_files:
-    st.info(f"{len(uploaded_files)}枚の納品書を読み込みました")
+    st.caption(f"{len(uploaded_files)} 件のファイルを読み込みました")
 
-st.divider()
+st.write("")
 
-if st.button("請求書を自動生成する", type="primary", use_container_width=True):
+if st.button("請求書を生成する", type="primary", use_container_width=True):
     if not uploaded_files:
         st.warning("納品書ファイルをアップロードしてください")
         st.stop()
@@ -172,9 +264,9 @@ if st.button("請求書を自動生成する", type="primary", use_container_wid
         st.error("データを抽出できませんでした")
         st.stop()
 
-    st.success(f"{len(store_data)}店舗分の請求書を生成しました")
-    st.subheader("内容確認")
-    st.caption("金額を必ず確認してからダウンロードしてください")
+    st.write("")
+    st.markdown('<p class="section-label">内容確認</p>', unsafe_allow_html=True)
+    st.caption("金額に誤りがないか確認してからダウンロードしてください")
 
     all_ok = True
     for store_name, data in store_data.items():
@@ -198,12 +290,10 @@ if st.button("請求書を自動生成する", type="primary", use_container_wid
             for i in merged_items if i["unit_price"] * i["quantity"] != i["amount"]
         ]
 
-        with st.expander(
-            f"{'✅' if not check_errors else '⚠️'} {store_name}　合計: ¥{total:,}（税込）",
-            expanded=True
-        ):
+        status = "-- 確認済み" if not check_errors else "-- 要確認"
+        with st.expander(f"{store_name}　{status}　合計 ¥{total:,}（税込）", expanded=True):
             if check_errors:
-                st.error("金額の不一致: " + " / ".join(check_errors))
+                st.error("金額の不一致が検出されました: " + " / ".join(check_errors))
                 all_ok = False
 
             df = pd.DataFrame(merged_items)[["name", "unit_price", "quantity", "amount"]]
@@ -219,10 +309,10 @@ if st.button("請求書を自動生成する", type="primary", use_container_wid
 
         store_data[store]["merged_items"] = merged_items
 
-    st.divider()
+    st.write("")
 
     if not all_ok:
-        st.error("金額の不一致があります。確認してください。")
+        st.error("金額の不一致があります。納品書ファイルを確認してください。")
     else:
         zip_buf = io.BytesIO()
         with zipfile.ZipFile(zip_buf, "w") as zf:
@@ -238,7 +328,7 @@ if st.button("請求書を自動生成する", type="primary", use_container_wid
 
         zip_buf.seek(0)
         st.download_button(
-            label=f"全{len(store_data)}店舗の請求書をZIPでダウンロード",
+            label=f"請求書をダウンロード（{len(store_data)}店舗分 / ZIP）",
             data=zip_buf,
             file_name=f"請求書一括_{billing_month}.zip",
             mime="application/zip",
