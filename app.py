@@ -158,7 +158,7 @@ def read_nouhinshо(file_bytes):
     }
 
 
-def create_invoice(store_name, all_items, billing_month, delivery_dates):
+def create_invoice(store_name, all_items, billing_month, billing_subject, delivery_dates):
     """お父さんのテンプレートをコピーして数字だけ書き換える"""
     wb = openpyxl.load_workbook(load_template())
     ws = wb.active
@@ -169,7 +169,7 @@ def create_invoice(store_name, all_items, billing_month, delivery_dates):
 
     # 件名（例: 令和8年5月分味噌加工品代金）
     reiwa = date.today().year - 2018
-    ws["C6"] = f"令和{reiwa}年{billing_month}味噌加工品代金"
+    ws["C6"] = f"令和{reiwa}年{billing_month}{billing_subject}"
 
     # 明細を一度クリア（行18〜33のA・B・J列）
     for r in range(ITEM_START_ROW, ITEM_END_ROW + 1):
@@ -212,14 +212,25 @@ def create_invoice(store_name, all_items, billing_month, delivery_dates):
 
 # ---- UI ----
 
-st.markdown('<p class="section-label">請求月</p>', unsafe_allow_html=True)
 reiwa_now = date.today().year - 2018
-billing_month = st.text_input(
-    "請求月",
-    value=f"{reiwa_now}年{date.today().month}月分",
-    label_visibility="collapsed"
-)
-st.caption(f"件名: 令和{reiwa_now}年{date.today().month}月分味噌加工品代金")
+
+col1, col2 = st.columns(2)
+with col1:
+    st.markdown('<p class="section-label">請求月</p>', unsafe_allow_html=True)
+    billing_month = st.text_input(
+        "請求月",
+        value=f"{date.today().month}月分",
+        label_visibility="collapsed"
+    )
+with col2:
+    st.markdown('<p class="section-label">件名（商品・サービス名）</p>', unsafe_allow_html=True)
+    billing_subject = st.text_input(
+        "件名",
+        value="味噌加工品代金",
+        label_visibility="collapsed"
+    )
+
+st.caption(f"請求書の件名: 令和{reiwa_now}年{billing_month}{billing_subject}")
 
 st.write("")
 st.markdown('<p class="section-label">納品書ファイル</p>', unsafe_allow_html=True)
@@ -321,6 +332,7 @@ if st.button("請求書を生成する", type="primary", use_container_width=Tru
                     store_name,
                     data["merged_items"],
                     billing_month,
+                    billing_subject,
                     data["dates"]
                 )
                 safe = store_name.replace("/", "_").replace(" ", "_").replace("　", "_")
