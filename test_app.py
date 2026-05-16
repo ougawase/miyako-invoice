@@ -222,6 +222,165 @@ class TestInvoiceGeneration(unittest.TestCase):
         wb = openpyxl.load_workbook(load_template())
         self.assertIn("見積書", wb.sheetnames)
 
+    # ----------------------------------------
+    # 3. 複数日付のテスト（日別詳細）
+    # ----------------------------------------
+    def test_multiple_dates_written_separately(self):
+        """複数日付がそれぞれ別の行グループに書き込まれること"""
+        dated_groups = [
+            {"date": datetime(2026, 5, 4),  "items": [
+                {"name": "ツナプレーン", "unit_price": 520, "quantity": 30, "amount": 15600},
+            ]},
+            {"date": datetime(2026, 5, 11), "items": [
+                {"name": "ツナプレーン", "unit_price": 520, "quantity": 20, "amount": 10400},
+            ]},
+        ]
+        result = create_invoice("テスト店舗", dated_groups, "5月分", "味噌加工品代金")
+        wb = openpyxl.load_workbook(io.BytesIO(result))
+        ws = wb.active
+
+        # 1行目: 5月4日
+        self.assertEqual(ws.cell(row=ITEM_START,     column=1).value, "5月4日",
+                         "1日目の日付が正しくありません")
+        self.assertEqual(ws.cell(row=ITEM_START,     column=2).value, "ツナプレーン")
+        self.assertEqual(ws.cell(row=ITEM_START,     column=10).value, 30,
+                         "1日目の数量が30のはずです")
+
+        # 2行目: 5月11日
+        self.assertEqual(ws.cell(row=ITEM_START + 1, column=1).value, "5月11日",
+                         "2日目の日付が正しくありません")
+        self.assertEqual(ws.cell(row=ITEM_START + 1, column=2).value, "ツナプレーン")
+        self.assertEqual(ws.cell(row=ITEM_START + 1, column=10).value, 20,
+                         "2日目の数量が20のはずです")
+
+    def test_same_product_not_merged_across_dates(self):
+        """同じ商品でも日付が違えば合算されず別行に出ること"""
+        dated_groups = [
+            {"date": datetime(2026, 5, 4),  "items": [
+                {"name": "ツナプレーン", "unit_price": 520, "quantity": 35, "amount": 18200},
+            ]},
+            {"date": datetime(2026, 5, 11), "items": [
+                {"name": "ツナプレーン", "unit_price": 520, "quantity": 35, "amount": 18200},
+            ]},
+        ]
+        result = create_invoice("テスト店舗", dated_groups, "5月分", "味噌加工品代金")
+        wb = openpyxl.load_workbook(io.BytesIO(result))
+        ws = wb.active
+
+        qty_row1 = ws.cell(row=ITEM_START,     column=10).value
+        qty_row2 = ws.cell(row=ITEM_START + 1, column=10).value
+
+        # 合算されると70になってしまう。35が2行あるのが正しい
+        self.assertEqual(qty_row1, 35, f"1行目の数量が35のはずが {qty_row1} です（日付をまたいで合算されています）")
+        self.assertEqual(qty_row2, 35, f"2行目の数量が35のはずが {qty_row2} です")
+
+    def test_same_product_merged_within_same_date(self):
+        """同じ日付内の同一商品は合算されること"""
+        dated_groups = [
+            {"date": datetime(2026, 5, 4), "items": [
+                {"name": "ツナプレーン", "unit_price": 520, "quantity": 20, "amount": 10400},
+                {"name": "ツナプレーン", "unit_price": 520, "quantity": 15, "amount":  7800},
+            ]},
+        ]
+        result = create_invoice("テスト店舗", dated_groups, "5月分", "味噌加工品代金")
+        wb = openpyxl.load_workbook(io.BytesIO(result))
+        ws = wb.active
+
+        qty = ws.cell(row=ITEM_START, column=10).value
+        self.assertEqual(qty, 35, f"同日内の同一商品は合算されるべきですが {qty} です")
+
+        # 2行目は空のはず
+        self.assertIsNone(ws.cell(row=ITEM_START + 1, column=2).value,
+                          "同日内の重複商品が2行目に残っています（合算されていません）")
+
+    def test_second_date_label_in_correct_row(self):
+        """2日目の日付ラベルが、1日目の商品数分だけ下の行に書かれること"""
+        dated_groups = [
+            {"date": datetime(2026, 5, 4), "items": [
+                {"name": "ツナプレーン", "unit_price": 520, "quantity": 35, "amount": 18200},
+                {"name": "ツナラー油",   "unit_price": 580, "quantity": 35, "amount": 20300},
+            ]},
+            {"date": datetime(2026, 5, 11), "items": [
+                {"name": "ツナおかず", "unit_price": 580, "quantity": 35, "amount": 20300},
+            ]},
+        ]
+        result = create_invoice("テスト店舗", dated_groups, "5月分", "味噌加工品代金")
+        wb = openpyxl.load_workbook(io.BytesIO(result))
+        ws = wb.active
+
+        # 1日目が2行分 → 2日目のラベルは行18+2=20
+        expected_row = ITEM_START + 2
+        self.assertEqual(ws.cell(row=expected_row, column=1).value, "5月11日",
+                         f"2日目の日付ラベルが行{expected_row}にあるべきですが見つかりません")
+
+    # ----------------------------------------
+    # 4. 境界値・異常系テスト
+    # ----------------------------------------
+    def test_row_overflow_does_not_crash(self):
+        """商品数が16行を超えてもクラッシュしないこと"""
+        many_items = [
+            {"name": f"商品{i:02d}", "unit_price": 500, "quantity": 10, "amount": 5000}
+            for i in range(20)  # 16行のテンプレートを超える20件
+        ]
+        dated_groups = [{"date": datetime(2026, 5, 4), "items": many_items}]
+        try:
+            result = create_invoice("テスト店舗", dated_groups, "5月分", "テスト")
+            self.assertGreater(len(result), 0)
+            # 最終行(33行)を超えて書かれていないこと
+            wb = openpyxl.load_workbook(io.BytesIO(result))
+            ws = wb.active
+            self.assertIsNone(ws.cell(row=ITEM_END + 1, column=2).value,
+                              f"行{ITEM_END+1}にデータが書かれています（範囲外）")
+        except Exception as e:
+            self.fail(f"行数オーバーフロー時にクラッシュしました: {e}")
+
+    def test_none_delivery_date_does_not_crash(self):
+        """納品日がNoneでもクラッシュせず、A列が空欄になること"""
+        dated_groups = [
+            {"date": None, "items": [
+                {"name": "ツナプレーン", "unit_price": 520, "quantity": 35, "amount": 18200},
+            ]}
+        ]
+        try:
+            result = create_invoice("テスト店舗", dated_groups, "5月分", "味噌加工品代金")
+            wb = openpyxl.load_workbook(io.BytesIO(result))
+            ws = wb.active
+            # 商品は書かれていること
+            self.assertEqual(ws.cell(row=ITEM_START, column=2).value, "ツナプレーン")
+            # 日付列は空か空文字
+            date_val = ws.cell(row=ITEM_START, column=1).value
+            self.assertIn(date_val, [None, ""], f"日付Noneのとき空欄になるべきですが '{date_val}' が入っています")
+        except Exception as e:
+            self.fail(f"日付Noneでクラッシュしました: {e}")
+
+    def test_empty_dated_groups_does_not_crash(self):
+        """納品書ゼロ件でもクラッシュしないこと"""
+        try:
+            result = create_invoice("テスト店舗", [], "5月分", "味噌加工品代金")
+            wb = openpyxl.load_workbook(io.BytesIO(result))
+            ws = wb.active
+            # 全明細行が空のはず
+            for r in range(ITEM_START, ITEM_END + 1):
+                self.assertIsNone(ws.cell(row=r, column=2).value,
+                                  f"行{r}にデータが残っています")
+        except Exception as e:
+            self.fail(f"空データでクラッシュしました: {e}")
+
+    def test_billing_month_all_months(self):
+        """1月〜12月すべてで件名が正しく生成されること"""
+        for month in range(1, 13):
+            billing_month = f"{month}月分"
+            result = create_invoice("テスト店舗", self.dated_groups, billing_month, "テスト代金")
+            wb = openpyxl.load_workbook(io.BytesIO(result))
+            ws = wb.active
+            title = ws["C6"].value
+            self.assertIn(f"{month}月分", title,
+                          f"{month}月分が件名に含まれていません: {title}")
+            # 年の重複チェック
+            reiwa = date.today().year - 2018
+            self.assertNotIn(f"年{reiwa}年", title,
+                             f"{month}月: 年が重複しています: {title}")
+
 
 if __name__ == "__main__":
     print("=" * 50)
