@@ -25,7 +25,7 @@ ITEM_END     = 33
 def load_template():
     return io.BytesIO(base64.b64decode(TEMPLATE_B64))
 
-def create_invoice(store_name, all_items, billing_month, billing_subject, delivery_dates):
+def create_invoice(store_name, dated_groups, billing_month, billing_subject):
     wb = openpyxl.load_workbook(load_template())
     ws = wb.active
     wb.calculation.fullCalcOnLoad = True
@@ -39,30 +39,33 @@ def create_invoice(store_name, all_items, billing_month, billing_subject, delive
         for col in [1, 2, 10, 11]:
             ws.cell(row=r, column=col).value = None
 
-    merged = {}
-    for item in all_items:
-        k = item["name"]
-        if k in merged:
-            merged[k]["quantity"] += item["quantity"]
-            merged[k]["amount"]   += item["amount"]
-        else:
-            merged[k] = dict(item)
-
-    date_labels = []
-    for d in delivery_dates:
-        if isinstance(d, datetime):
-            date_labels.append(f"{d.month}月{d.day}日")
-    date_label = "・".join(date_labels) if date_labels else ""
-
-    for i, item in enumerate(merged.values()):
-        r = ITEM_START + i
-        if r > ITEM_END:
+    current_row = ITEM_START
+    for group in dated_groups:
+        if current_row > ITEM_END:
             break
-        if i == 0:
-            ws.cell(row=r, column=1).value = date_label
-        ws.cell(row=r, column=2).value  = item["name"]
-        ws.cell(row=r, column=10).value = item["quantity"]
-        ws.cell(row=r, column=11).value = "個"
+        d = group["date"]
+        date_label = f"{d.month}月{d.day}日" if isinstance(d, datetime) else ""
+
+        merged = {}
+        for item in group["items"]:
+            k = item["name"]
+            if k in merged:
+                merged[k]["quantity"] += item["quantity"]
+                merged[k]["amount"]   += item["amount"]
+            else:
+                merged[k] = dict(item)
+
+        first = True
+        for item in merged.values():
+            if current_row > ITEM_END:
+                break
+            if first:
+                ws.cell(row=current_row, column=1).value = date_label
+                first = False
+            ws.cell(row=current_row, column=2).value  = item["name"]
+            ws.cell(row=current_row, column=10).value = item["quantity"]
+            ws.cell(row=current_row, column=11).value = "個"
+            current_row += 1
 
     buf = io.BytesIO()
     wb.save(buf)
@@ -78,7 +81,10 @@ class TestInvoiceGeneration(unittest.TestCase):
             {"name": "ツナラー油",   "unit_price": 580, "quantity": 35, "amount": 20300},
             {"name": "ツナおかず",   "unit_price": 580, "quantity": 35, "amount": 20300},
         ]
-        self.delivery_dates = [datetime(2026, 5, 4)]
+        # 新形式: 日付グループ
+        self.dated_groups = [
+            {"date": datetime(2026, 5, 4), "items": self.sample_items}
+        ]
 
     # ----------------------------------------
     # 1. 金額計算の正確性チェック
@@ -117,10 +123,9 @@ class TestInvoiceGeneration(unittest.TestCase):
         """請求書Excelが正常に生成されること"""
         result = create_invoice(
             "島の駅みやこ",
-            self.sample_items,
+            self.dated_groups,
             "5月分",
             "味噌加工品代金",
-            self.delivery_dates
         )
         self.assertIsNotNone(result)
         self.assertGreater(len(result), 0)
@@ -129,10 +134,9 @@ class TestInvoiceGeneration(unittest.TestCase):
         """店舗名（宛先）がA3セルに書き込まれること"""
         result = create_invoice(
             "島の駅みやこ",
-            self.sample_items,
+            self.dated_groups,
             "5月分",
             "味噌加工品代金",
-            self.delivery_dates
         )
         wb = openpyxl.load_workbook(io.BytesIO(result))
         ws = wb.active
@@ -142,27 +146,24 @@ class TestInvoiceGeneration(unittest.TestCase):
         """件名がC6セルに正しく書き込まれること（重複なし）"""
         result = create_invoice(
             "島の駅みやこ",
-            self.sample_items,
+            self.dated_groups,
             "5月分",
             "味噌加工品代金",
-            self.delivery_dates
         )
         wb = openpyxl.load_workbook(io.BytesIO(result))
         ws = wb.active
         title = ws["C6"].value
         self.assertIn("5月分", title)
         self.assertIn("味噌加工品代金", title)
-        # 「8年8年」のような重複がないこと
         self.assertNotIn("年8年", title, f"件名に年が重複しています: {title}")
 
     def test_items_written_correctly(self):
         """商品名・数量・単位が明細行に正しく書き込まれること"""
         result = create_invoice(
             "島の駅みやこ",
-            self.sample_items,
+            self.dated_groups,
             "5月分",
             "味噌加工品代金",
-            self.delivery_dates
         )
         wb = openpyxl.load_workbook(io.BytesIO(result))
         ws = wb.active
@@ -180,10 +181,9 @@ class TestInvoiceGeneration(unittest.TestCase):
         """納品日が最初の明細行のA列に書き込まれること"""
         result = create_invoice(
             "島の駅みやこ",
-            self.sample_items,
+            self.dated_groups,
             "5月分",
             "味噌加工品代金",
-            self.delivery_dates
         )
         wb = openpyxl.load_workbook(io.BytesIO(result))
         ws = wb.active
@@ -193,14 +193,14 @@ class TestInvoiceGeneration(unittest.TestCase):
         """テンプレートの前のデータが残っていないこと"""
         result = create_invoice(
             "テスト店舗",
-            [{"name": "ツナプレーン", "unit_price": 520, "quantity": 10, "amount": 5200}],
+            [{"date": datetime(2026, 5, 4), "items": [
+                {"name": "ツナプレーン", "unit_price": 520, "quantity": 10, "amount": 5200}
+            ]}],
             "5月分",
             "味噌加工品代金",
-            []
         )
         wb = openpyxl.load_workbook(io.BytesIO(result))
         ws = wb.active
-        # 2行目以降は空のはず
         for r in range(ITEM_START + 1, ITEM_START + 5):
             self.assertIsNone(ws.cell(row=r, column=2).value,
                              f"行{r}: 前のデータが残っています（商品名: {ws.cell(row=r, column=2).value}）")
@@ -209,10 +209,9 @@ class TestInvoiceGeneration(unittest.TestCase):
         """Excelを開いた時に数式が自動再計算されること"""
         result = create_invoice(
             "島の駅みやこ",
-            self.sample_items,
+            self.dated_groups,
             "5月分",
             "味噌加工品代金",
-            self.delivery_dates
         )
         wb = openpyxl.load_workbook(io.BytesIO(result))
         self.assertTrue(wb.calculation.fullCalcOnLoad,

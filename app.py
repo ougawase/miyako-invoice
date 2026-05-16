@@ -158,8 +158,10 @@ def read_nouhinshо(file_bytes):
     }
 
 
-def create_invoice(store_name, all_items, billing_month, billing_subject, delivery_dates):
-    """お父さんのテンプレートをコピーして数字だけ書き換える"""
+def create_invoice(store_name, dated_groups, billing_month, billing_subject):
+    """お父さんのテンプレートをコピーして数字だけ書き換える
+    dated_groups: [{"date": datetime, "items": [...]}, ...]  日付ごとのグループ
+    """
     wb = openpyxl.load_workbook(load_template())
     ws = wb.active
 
@@ -181,33 +183,38 @@ def create_invoice(store_name, all_items, billing_month, billing_subject, delive
         ws.cell(row=r, column=10).value = None  # J: 数量
         ws.cell(row=r, column=11).value = None  # K: 単位
 
-    # 商品をまとめる（同じ商品は合算）
-    merged = {}
-    for item in all_items:
-        k = item["name"]
-        if k in merged:
-            merged[k]["quantity"] += item["quantity"]
-            merged[k]["amount"]   += item["amount"]
-        else:
-            merged[k] = dict(item)
-
-    # 日付文字列（例: "5月4日"）・複数日ある場合は全て表示
-    date_labels = []
-    for d in delivery_dates:
-        if isinstance(d, datetime):
-            date_labels.append(f"{d.month}月{d.day}日")
-    date_label = "・".join(date_labels) if date_labels else ""
-
-    # 明細を書き込む
-    for i, item in enumerate(merged.values()):
-        r = ITEM_START_ROW + i
-        if r > ITEM_END_ROW:
+    # 日付グループごとに明細を書き込む
+    current_row = ITEM_START_ROW
+    for group in dated_groups:
+        if current_row > ITEM_END_ROW:
             break
-        if i == 0:
-            ws.cell(row=r, column=1).value = date_label   # A列: 納品日
-        ws.cell(row=r, column=2).value  = item["name"]    # B列: 商品名
-        ws.cell(row=r, column=10).value = item["quantity"] # J列: 数量
-        ws.cell(row=r, column=11).value = "個"            # K列: 単位
+
+        # 日付ラベル（例: "5月4日"）
+        d = group["date"]
+        date_label = f"{d.month}月{d.day}日" if isinstance(d, datetime) else ""
+
+        # 同じ日付内で同じ商品は合算
+        merged = {}
+        for item in group["items"]:
+            k = item["name"]
+            if k in merged:
+                merged[k]["quantity"] += item["quantity"]
+                merged[k]["amount"]   += item["amount"]
+            else:
+                merged[k] = dict(item)
+
+        # この日付のアイテムを書き込む
+        first_in_group = True
+        for item in merged.values():
+            if current_row > ITEM_END_ROW:
+                break
+            if first_in_group:
+                ws.cell(row=current_row, column=1).value = date_label  # A列: 納品日（各グループ先頭のみ）
+                first_in_group = False
+            ws.cell(row=current_row, column=2).value  = item["name"]     # B列: 商品名
+            ws.cell(row=current_row, column=10).value = item["quantity"]  # J列: 数量
+            ws.cell(row=current_row, column=11).value = "個"             # K列: 単位
+            current_row += 1
 
     buf = io.BytesIO()
     wb.save(buf)
@@ -267,10 +274,12 @@ if st.button("請求書を生成する", type="primary", use_container_width=Tru
             continue
         store = result["store_name"]
         if store not in store_data:
-            store_data[store] = {"items": [], "dates": []}
-        store_data[store]["items"].extend(result["items"])
-        if result["delivery_date"]:
-            store_data[store]["dates"].append(result["delivery_date"])
+            store_data[store] = {"dated_groups": []}
+        # 日付とアイテムをセットで保持（日別詳細を維持するため）
+        store_data[store]["dated_groups"].append({
+            "date":  result["delivery_date"],
+            "items": result["items"],
+        })
     progress.empty()
 
     if errors:
@@ -285,15 +294,17 @@ if st.button("請求書を生成する", type="primary", use_container_width=Tru
 
     all_ok = True
     for store_name, data in store_data.items():
-        merged = {}
-        for item in data["items"]:
+        # 全アイテムを合算（金額確認・合計表示用）
+        all_items_flat = [item for g in data["dated_groups"] for item in g["items"]]
+        merged_all = {}
+        for item in all_items_flat:
             k = item["name"]
-            if k in merged:
-                merged[k]["quantity"] += item["quantity"]
-                merged[k]["amount"]   += item["amount"]
+            if k in merged_all:
+                merged_all[k]["quantity"] += item["quantity"]
+                merged_all[k]["amount"]   += item["amount"]
             else:
-                merged[k] = dict(item)
-        merged_items = list(merged.values())
+                merged_all[k] = dict(item)
+        merged_items = list(merged_all.values())
 
         subtotal = sum(i["amount"] for i in merged_items)
         tax      = int(subtotal * TAX_RATE)
@@ -311,18 +322,21 @@ if st.button("請求書を生成する", type="primary", use_container_width=Tru
                 st.error("金額の不一致が検出されました: " + " / ".join(check_errors))
                 all_ok = False
 
-            df = pd.DataFrame(merged_items)[["name", "unit_price", "quantity", "amount"]]
-            df.columns = ["商品名", "単価", "数量", "金額"]
-            df["単価"] = df["単価"].map(lambda x: f"¥{x:,}")
-            df["金額"] = df["金額"].map(lambda x: f"¥{x:,}")
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            # 日別明細を表示
+            for group in data["dated_groups"]:
+                d = group["date"]
+                label = f"{d.month}月{d.day}日" if isinstance(d, datetime) else "日付不明"
+                st.caption(f"**{label}**")
+                df = pd.DataFrame(group["items"])[["name", "unit_price", "quantity", "amount"]]
+                df.columns = ["商品名", "単価", "数量", "金額"]
+                df["単価"] = df["単価"].map(lambda x: f"¥{x:,}")
+                df["金額"] = df["金額"].map(lambda x: f"¥{x:,}")
+                st.dataframe(df, use_container_width=True, hide_index=True)
 
             c1, c2, c3 = st.columns(3)
             c1.metric("小計（税抜）", f"¥{subtotal:,}")
             c2.metric("消費税（8%）", f"¥{tax:,}")
             c3.metric("合計（税込）", f"¥{total:,}")
-
-        store_data[store]["merged_items"] = merged_items
 
     st.write("")
 
@@ -334,10 +348,9 @@ if st.button("請求書を生成する", type="primary", use_container_width=Tru
             for store_name, data in store_data.items():
                 excel_bytes = create_invoice(
                     store_name,
-                    data["merged_items"],
+                    data["dated_groups"],
                     billing_month,
                     billing_subject,
-                    data["dates"]
                 )
                 safe = store_name.replace("/", "_").replace(" ", "_").replace("　", "_")
                 zf.writestr(f"令和{date.today().year-2018}年{billing_month}請求書（{safe}）.xlsx", excel_bytes)
