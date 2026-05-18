@@ -117,11 +117,37 @@ st.markdown("""
     /* ファイルアップローダー */
     [data-testid="stFileUploader"] {
         background-color: #141414 !important;
-        border: 1px dashed rgba(255,255,255,0.12) !important;
+        border: 1px dashed rgba(255,255,255,0.15) !important;
         border-radius: 8px !important;
     }
-    [data-testid="stFileUploader"] * {
-        color: rgba(255,255,255,0.6) !important;
+    [data-testid="stFileUploader"] *,
+    [data-testid="stFileUploader"] p,
+    [data-testid="stFileUploader"] span,
+    [data-testid="stFileUploader"] small,
+    [data-testid="stFileUploader"] div,
+    [data-testid="stFileUploaderDropzone"] *,
+    [data-testid="stFileUploaderDropzone"] {
+        background-color: #141414 !important;
+        color: rgba(255,255,255,0.65) !important;
+    }
+    [data-testid="stFileUploaderDropzone"] {
+        border: none !important;
+    }
+    /* アップロード済みファイル表示 */
+    [data-testid="stFileUploaderFile"] {
+        background-color: #1e1e1e !important;
+        border: 1px solid rgba(255,255,255,0.08) !important;
+        border-radius: 6px !important;
+    }
+    [data-testid="stFileUploaderFile"] * {
+        color: rgba(255,255,255,0.75) !important;
+    }
+    /* Browse files ボタン */
+    [data-testid="stFileUploader"] button {
+        background-color: #2a2a2a !important;
+        color: rgba(255,255,255,0.8) !important;
+        border: 1px solid rgba(255,255,255,0.15) !important;
+        border-radius: 6px !important;
     }
 
     /* expander */
