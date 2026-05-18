@@ -23,95 +23,176 @@ TAX_RATE = 0.08
 ITEM_START_ROW = 18
 ITEM_END_ROW = 33
 
-st.set_page_config(page_title="請求書作成 | 株式会社 新家", layout="centered")
+st.set_page_config(page_title="Invoice Generator | 株式会社 新家", layout="centered")
 
 st.markdown("""
 <style>
-    /* フォント・背景 */
-    html, body, [class*="css"] {
+    /* ベース */
+    html, body, [class*="css"], .stApp {
         font-family: 'Hiragino Kaku Gothic Pro', 'Noto Sans JP', sans-serif;
-        background-color: #f8f8f6;
+        background-color: #0a0a0a !important;
+        color: rgba(255,255,255,0.9);
+        line-height: 1.65;
     }
+
+    /* Streamlit内部の白背景を全て上書き */
+    .main, .block-container {
+        background-color: #0a0a0a !important;
+    }
+    section[data-testid="stSidebar"] {
+        background-color: #0f0f0f !important;
+    }
+
     /* ヘッダー */
     .app-header {
-        padding: 2.5rem 0 1.5rem 0;
-        border-bottom: 2px solid #1a1a1a;
-        margin-bottom: 2rem;
+        padding: 3rem 0 1.8rem 0;
+        border-bottom: 1px solid rgba(255,255,255,0.08);
+        margin-bottom: 2.5rem;
     }
     .app-header h1 {
-        font-size: 1.4rem;
+        font-size: 1.3rem;
         font-weight: 700;
-        letter-spacing: 0.05em;
-        color: #1a1a1a;
+        letter-spacing: 0.08em;
+        color: rgba(255,255,255,0.95);
         margin: 0;
     }
     .app-header p {
-        font-size: 0.8rem;
-        color: #888;
-        margin: 0.3rem 0 0 0;
-        letter-spacing: 0.03em;
+        font-size: 0.78rem;
+        color: rgba(255,255,255,0.4);
+        margin: 0.4rem 0 0 0;
+        letter-spacing: 0.04em;
     }
+
     /* セクションラベル */
     .section-label {
-        font-size: 0.7rem;
+        font-size: 0.65rem;
         font-weight: 700;
-        letter-spacing: 0.12em;
+        letter-spacing: 0.15em;
         text-transform: uppercase;
-        color: #888;
+        color: rgba(255,255,255,0.35);
         margin-bottom: 0.5rem;
     }
-    /* 確認テーブルヘッダー */
-    .confirm-header {
-        font-size: 0.85rem;
-        font-weight: 600;
-        color: #1a1a1a;
-        padding: 0.8rem 0;
-        border-bottom: 1px solid #e0e0e0;
-        margin-bottom: 1rem;
-    }
-    /* 金額ハイライト */
-    .total-amount {
-        font-size: 1.1rem;
-        font-weight: 700;
-        color: #1a1a1a;
-    }
-    /* ボタン上書き */
+
+    /* ボタン */
     .stButton > button {
-        background-color: #1a1a1a;
-        color: white;
-        border: none;
-        border-radius: 2px;
+        background-color: #ffffff !important;
+        color: #0a0a0a !important;
+        border: none !important;
+        border-radius: 6px;
         font-size: 0.85rem;
         font-weight: 600;
-        letter-spacing: 0.08em;
+        letter-spacing: 0.06em;
         padding: 0.7rem 1.5rem;
+        transition: opacity 0.15s ease;
     }
     .stButton > button:hover {
-        background-color: #333;
+        background-color: rgba(255,255,255,0.88) !important;
+        color: #0a0a0a !important;
     }
-    /* アップローダー */
+
+    /* プライマリボタン */
+    .stButton > button[kind="primary"] {
+        background-color: #ffffff !important;
+        color: #0a0a0a !important;
+    }
+
+    /* 入力フィールド */
+    input, textarea, [data-testid="stTextInput"] input {
+        background-color: #141414 !important;
+        color: rgba(255,255,255,0.9) !important;
+        border: 1px solid rgba(255,255,255,0.1) !important;
+        border-radius: 6px !important;
+    }
+    input:focus, textarea:focus {
+        border-color: rgba(255,255,255,0.3) !important;
+        box-shadow: none !important;
+    }
+
+    /* ラベルテキスト */
+    label, .stTextInput label {
+        color: rgba(255,255,255,0.5) !important;
+        font-size: 0.78rem !important;
+    }
+
+    /* ファイルアップローダー */
     [data-testid="stFileUploader"] {
-        border: 1px solid #d0d0d0;
-        border-radius: 2px;
-        background: white;
+        background-color: #141414 !important;
+        border: 1px dashed rgba(255,255,255,0.12) !important;
+        border-radius: 8px !important;
     }
+    [data-testid="stFileUploader"] * {
+        color: rgba(255,255,255,0.6) !important;
+    }
+
     /* expander */
     [data-testid="stExpander"] {
-        border: 1px solid #e0e0e0;
-        border-radius: 2px;
-        background: white;
+        background-color: #141414 !important;
+        border: 1px solid rgba(255,255,255,0.07) !important;
+        border-radius: 8px !important;
     }
-    /* 入力フィールド */
-    input[type="text"] {
-        border-radius: 2px;
-        border: 1px solid #d0d0d0;
+    [data-testid="stExpander"] summary {
+        color: rgba(255,255,255,0.85) !important;
     }
+
+    /* dataframe / テーブル */
+    [data-testid="stDataFrame"], .stDataFrame {
+        background-color: #141414 !important;
+        border: 1px solid rgba(255,255,255,0.07) !important;
+        border-radius: 6px !important;
+    }
+
+    /* メトリクス */
+    [data-testid="stMetric"] {
+        background-color: #141414;
+        border: 1px solid rgba(255,255,255,0.07);
+        border-radius: 8px;
+        padding: 1rem;
+    }
+    [data-testid="stMetricLabel"] {
+        color: rgba(255,255,255,0.45) !important;
+        font-size: 0.72rem !important;
+        letter-spacing: 0.06em;
+    }
+    [data-testid="stMetricValue"] {
+        color: rgba(255,255,255,0.95) !important;
+        font-size: 1.1rem !important;
+        font-weight: 600;
+    }
+
+    /* caption / info テキスト */
+    .stCaption, [data-testid="stCaptionContainer"] {
+        color: rgba(255,255,255,0.35) !important;
+    }
+
+    /* warning / error / success */
+    [data-testid="stAlert"] {
+        background-color: #1a1a1a !important;
+        border: 1px solid rgba(255,255,255,0.1) !important;
+        border-radius: 6px !important;
+        color: rgba(255,255,255,0.8) !important;
+    }
+
+    /* progress bar */
+    [data-testid="stProgressBar"] > div {
+        background-color: rgba(255,255,255,0.15) !important;
+        border-radius: 4px;
+    }
+    [data-testid="stProgressBar"] > div > div {
+        background-color: #ffffff !important;
+    }
+
+    /* divider */
+    hr {
+        border-color: rgba(255,255,255,0.06) !important;
+    }
+
     /* フッター非表示 */
     footer { visibility: hidden; }
+    #MainMenu { visibility: hidden; }
 </style>
 
 <div class="app-header">
-    <h1>請求書作成システム</h1>
+    <h1>Invoice Generator</h1>
     <p>株式会社 新家 / 納品書から請求書を自動生成します</p>
 </div>
 """, unsafe_allow_html=True)
