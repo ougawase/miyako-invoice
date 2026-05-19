@@ -1,27 +1,15 @@
 import streamlit as st
-import openpyxl
 import pandas as pd
 import io
 import zipfile
-import base64
 from datetime import date, datetime
-from template_data import TEMPLATE_B64
+from invoice import (
+    read_nouhinshо, create_invoice, verify_invoice_output,
+    PRICE_MASTER, TAX_RATE, ITEM_START, ITEM_END,
+)
 
-def load_template():
-    return io.BytesIO(base64.b64decode(TEMPLATE_B64))
-
-# 商品マスタ（テンプレートV6:W11より）
-PRICE_MASTER = {
-    "ツナプレーン": 520,
-    "ツナおかず": 580,
-    "ツナラー油": 580,
-    "ツナ味噌": 580,
-    "ツナガリ": 580,
-    "ツナカレー": 580,
-}
-TAX_RATE = 0.08
-ITEM_START_ROW = 18
-ITEM_END_ROW = 33
+ITEM_START_ROW = ITEM_START
+ITEM_END_ROW   = ITEM_END
 
 st.set_page_config(page_title="Invoice Generator | 株式会社 新家", layout="centered")
 
@@ -224,114 +212,6 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-def read_nouhinshо(file_bytes):
-    wb = openpyxl.load_workbook(io.BytesIO(file_bytes))
-    ws = wb.active
-
-    store_name = ws["A3"].value or ""
-    delivery_date = ws["N4"].value
-
-    price_map = {}
-    for row in ws.iter_rows(min_row=6, max_row=11, min_col=22, max_col=23, values_only=True):
-        if row[0] and row[1]:
-            price_map[str(row[0])] = int(row[1])
-    for k, v in PRICE_MASTER.items():
-        price_map.setdefault(k, v)
-
-    items = []
-    for r in range(18, 30):
-        name = ws.cell(row=r, column=2).value
-        qty  = ws.cell(row=r, column=10).value
-        if name and qty and int(qty) > 0:
-            unit_price = price_map.get(str(name), 0)
-            items.append({
-                "name": str(name),
-                "unit_price": unit_price,
-                "quantity": int(qty),
-                "amount": int(qty) * unit_price,
-            })
-
-    if not store_name.strip() or not items:
-        return None
-
-    subtotal = sum(i["amount"] for i in items)
-    return {
-        "store_name": store_name.strip(),
-        "delivery_date": delivery_date,
-        "items": items,
-        "subtotal": subtotal,
-        "tax": int(subtotal * TAX_RATE),
-        "total": subtotal + int(subtotal * TAX_RATE),
-    }
-
-
-def create_invoice(store_name, dated_groups, billing_month, billing_subject):
-    """お父さんのテンプレートをコピーして数字だけ書き換える
-    dated_groups: [{"date": datetime, "items": [...]}, ...]  日付ごとのグループ
-    """
-    wb = openpyxl.load_workbook(load_template())
-    ws = wb.active
-
-    # 開いた時に必ず数式を再計算させる（合計額が反映されないバグの修正）
-    wb.calculation.fullCalcOnLoad = True
-
-    # 宛先・日付・件名
-    ws["A3"] = store_name
-    ws["N4"] = date.today()
-
-    # 件名（例: 令和8年5月分味噌加工品代金）
-    reiwa = date.today().year - 2018
-    ws["C6"] = f"令和{reiwa}年{billing_month}{billing_subject}"
-
-    # 明細を一度クリア（行18〜33のA・B・J・K・L・O列）
-    for r in range(ITEM_START_ROW, ITEM_END_ROW + 1):
-        ws.cell(row=r, column=1).value = None   # A: 日付
-        ws.cell(row=r, column=2).value = None   # B: 商品名
-        ws.cell(row=r, column=10).value = None  # J: 数量
-        ws.cell(row=r, column=11).value = None  # K: 単位
-        ws.cell(row=r, column=12).value = None  # L: 単価（VLOOKUPを上書き）
-        ws.cell(row=r, column=15).value = None  # O: 金額（数式を上書き）
-
-    # 日付グループごとに明細を書き込む
-    current_row = ITEM_START_ROW
-    for group in dated_groups:
-        if current_row > ITEM_END_ROW:
-            break
-
-        # 日付ラベル（例: "5月4日"）
-        d = group["date"]
-        date_label = f"{d.month}月{d.day}日" if isinstance(d, datetime) else ""
-
-        # 同じ日付内で同じ商品は合算
-        merged = {}
-        for item in group["items"]:
-            k = item["name"]
-            if k in merged:
-                merged[k]["quantity"] += item["quantity"]
-                merged[k]["amount"]   += item["amount"]
-            else:
-                merged[k] = dict(item)
-
-        # この日付のアイテムを書き込む
-        first_in_group = True
-        for item in merged.values():
-            if current_row > ITEM_END_ROW:
-                break
-            if first_in_group:
-                ws.cell(row=current_row, column=1).value = date_label  # A列: 納品日（各グループ先頭のみ）
-                first_in_group = False
-            ws.cell(row=current_row, column=2).value  = item["name"]        # B列: 商品名
-            ws.cell(row=current_row, column=10).value = item["quantity"]   # J列: 数量
-            ws.cell(row=current_row, column=11).value = "個"              # K列: 単位
-            ws.cell(row=current_row, column=12).value = item["unit_price"] # L列: 単価（数値で直書き）
-            ws.cell(row=current_row, column=15).value = item["amount"]     # O列: 金額（数値で直書き）
-            current_row += 1
-
-    buf = io.BytesIO()
-    wb.save(buf)
-    return buf.getvalue()
-
-
 # ---- UI ----
 
 reiwa_now = date.today().year - 2018
@@ -373,8 +253,9 @@ if st.button("請求書を生成する", type="primary", use_container_width=Tru
         st.warning("納品書ファイルをアップロードしてください")
         st.stop()
 
-    store_data = {}
-    errors = []
+    store_data       = {}
+    errors           = []
+    unknown_warnings = []  # 単価不明の商品
 
     progress = st.progress(0, text="読み取り中...")
     for i, f in enumerate(uploaded_files):
@@ -383,15 +264,27 @@ if st.button("請求書を生成する", type="primary", use_container_width=Tru
         if result is None:
             errors.append(f.name)
             continue
+
+        # 単価が不明な商品を記録
+        for prod in result.get("unknown_products", []):
+            unknown_warnings.append(f"{f.name} → 「{prod}」（単価¥0）")
+
         store = result["store_name"]
         if store not in store_data:
             store_data[store] = {"dated_groups": []}
-        # 日付とアイテムをセットで保持（日別詳細を維持するため）
         store_data[store]["dated_groups"].append({
             "date":  result["delivery_date"],
             "items": result["items"],
         })
     progress.empty()
+
+    # 単価不明の商品が1件でもあれば強制停止
+    if unknown_warnings:
+        st.error("⚠️ 単価が不明な商品が見つかりました。請求書を作成できません。")
+        for w in unknown_warnings:
+            st.error(f"　{w}")
+        st.caption("価格マスタ（テンプレートのV6:W11）に商品名を追加するか、納品書の商品名を確認してください。")
+        st.stop()
 
     if errors:
         st.warning(f"読み取れなかったファイル: {', '.join(errors)}")
@@ -455,6 +348,7 @@ if st.button("請求書を生成する", type="primary", use_container_width=Tru
         st.error("金額の不一致があります。納品書ファイルを確認してください。")
     else:
         zip_buf = io.BytesIO()
+        verify_failed = []
         with zipfile.ZipFile(zip_buf, "w") as zf:
             for store_name, data in store_data.items():
                 excel_bytes = create_invoice(
@@ -463,8 +357,20 @@ if st.button("請求書を生成する", type="primary", use_container_width=Tru
                     billing_month,
                     billing_subject,
                 )
+                # 生成後に書き込み値を再検証
+                check = verify_invoice_output(excel_bytes, data["dated_groups"])
+                if not check["ok"]:
+                    verify_failed.extend([f"{store_name}: {e}" for e in check["errors"]])
+                    continue  # 壊れたファイルはZIPに含めない
+
                 safe = store_name.replace("/", "_").replace(" ", "_").replace("　", "_")
                 zf.writestr(f"令和{date.today().year-2018}年{billing_month}請求書（{safe}）.xlsx", excel_bytes)
+
+        if verify_failed:
+            st.error("Excel書き込み検証でエラーが見つかりました。ダウンロードを中止しました。")
+            for e in verify_failed:
+                st.error(f"　{e}")
+            st.stop()
 
         zip_buf.seek(0)
         st.download_button(
