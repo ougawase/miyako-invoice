@@ -333,6 +333,40 @@ class TestZeroPriceDetection(unittest.TestCase):
 
 
 # ====================================================
+class TestDateHandling(unittest.TestCase):
+    """7. 日付型のエッジケース"""
+
+    def test_date_object_produces_label(self):
+        """datetime.date 型（datetime のサブクラスでない）でも日付ラベルが出ること"""
+        from datetime import date as date_cls
+        groups = [{"date": date_cls(2026, 4, 6), "items": [make_item("ツナプレーン", 35)]}]
+        ws = load_excel(create_invoice("テスト", groups, "4月分", "テスト"))
+        label = ws.cell(row=ITEM_START, column=1).value
+        self.assertEqual(label, "4月6日",
+                         f"date型の日付が空になっています: '{label}'")
+
+    def test_read_all_16_rows(self):
+        """納品書が16商品（行18〜33）まで全て読めること"""
+        import openpyxl, io, base64
+        from template_data import TEMPLATE_B64
+
+        wb = openpyxl.load_workbook(io.BytesIO(base64.b64decode(TEMPLATE_B64)))
+        ws = wb.active
+        ws["A3"] = "テスト店舗"
+        ws["N4"] = datetime(2026, 5, 4)
+        # 16商品すべて記入
+        for i in range(16):
+            ws.cell(row=18 + i, column=2).value  = "ツナプレーン"
+            ws.cell(row=18 + i, column=10).value = 1
+        buf = io.BytesIO(); wb.save(buf)
+
+        result = read_nouhinshо(buf.getvalue())
+        self.assertIsNotNone(result)
+        self.assertEqual(len(result["items"]), 16,
+                         f"16商品のうち{len(result['items'])}品しか読めていません（range(18,30)バグ）")
+
+
+# ====================================================
 if __name__ == "__main__":
     print("=" * 60)
     print("請求書自動生成ツール 自動テスト")
@@ -347,6 +381,7 @@ if __name__ == "__main__":
         TestMultipleDates,
         TestEdgeCases,
         TestZeroPriceDetection,
+        TestDateHandling,
     ]:
         suite.addTests(loader.loadTestsFromTestCase(cls))
 

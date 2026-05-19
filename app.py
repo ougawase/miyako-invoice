@@ -8,9 +8,6 @@ from invoice import (
     PRICE_MASTER, TAX_RATE, ITEM_START, ITEM_END,
 )
 
-ITEM_START_ROW = ITEM_START
-ITEM_END_ROW   = ITEM_END
-
 st.set_page_config(page_title="Invoice Generator | 株式会社 新家", layout="centered")
 
 st.markdown("""
@@ -329,7 +326,7 @@ if st.button("請求書を生成する", type="primary", use_container_width=Tru
             # 日別明細を表示
             for group in data["dated_groups"]:
                 d = group["date"]
-                label = f"{d.month}月{d.day}日" if isinstance(d, datetime) else "日付不明"
+                label = f"{d.month}月{d.day}日" if isinstance(d, date) else "日付不明"
                 st.caption(f"**{label}**")
                 df = pd.DataFrame(group["items"])[["name", "unit_price", "quantity", "amount"]]
                 df.columns = ["商品名", "単価", "数量", "金額"]

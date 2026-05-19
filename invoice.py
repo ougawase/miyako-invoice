@@ -50,7 +50,7 @@ def read_nouhinshо(file_bytes):
     items           = []
     unknown_products = []  # 単価が0の商品（価格マスタ未登録）
 
-    for r in range(18, 30):
+    for r in range(ITEM_START, ITEM_END + 1):  # 18〜33行（最大16商品）
         name = ws.cell(row=r, column=2).value
         qty  = ws.cell(row=r, column=10).value
         if not name or not qty:
@@ -126,7 +126,7 @@ def create_invoice(store_name, dated_groups, billing_month, billing_subject):
             break
 
         d = group["date"]
-        date_label = f"{d.month}月{d.day}日" if isinstance(d, datetime) else ""
+        date_label = f"{d.month}月{d.day}日" if isinstance(d, date) else ""
 
         # 同じ日付内の同一商品を合算
         merged = {}
@@ -173,7 +173,7 @@ def verify_invoice_output(excel_bytes, dated_groups):
     expected_rows = []
     for group in dated_groups:
         d = group["date"]
-        date_label = f"{d.month}月{d.day}日" if isinstance(d, datetime) else ""
+        date_label = f"{d.month}月{d.day}日" if isinstance(d, date) else ""
         merged = {}
         for item in group["items"]:
             k = item["name"]
