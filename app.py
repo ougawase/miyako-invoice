@@ -283,12 +283,14 @@ def create_invoice(store_name, dated_groups, billing_month, billing_subject):
     reiwa = date.today().year - 2018
     ws["C6"] = f"令和{reiwa}年{billing_month}{billing_subject}"
 
-    # 明細を一度クリア（行18〜33のA・B・J・K列）
+    # 明細を一度クリア（行18〜33のA・B・J・K・L・O列）
     for r in range(ITEM_START_ROW, ITEM_END_ROW + 1):
         ws.cell(row=r, column=1).value = None   # A: 日付
         ws.cell(row=r, column=2).value = None   # B: 商品名
         ws.cell(row=r, column=10).value = None  # J: 数量
         ws.cell(row=r, column=11).value = None  # K: 単位
+        ws.cell(row=r, column=12).value = None  # L: 単価（VLOOKUPを上書き）
+        ws.cell(row=r, column=15).value = None  # O: 金額（数式を上書き）
 
     # 日付グループごとに明細を書き込む
     current_row = ITEM_START_ROW
@@ -318,9 +320,11 @@ def create_invoice(store_name, dated_groups, billing_month, billing_subject):
             if first_in_group:
                 ws.cell(row=current_row, column=1).value = date_label  # A列: 納品日（各グループ先頭のみ）
                 first_in_group = False
-            ws.cell(row=current_row, column=2).value  = item["name"]     # B列: 商品名
-            ws.cell(row=current_row, column=10).value = item["quantity"]  # J列: 数量
-            ws.cell(row=current_row, column=11).value = "個"             # K列: 単位
+            ws.cell(row=current_row, column=2).value  = item["name"]        # B列: 商品名
+            ws.cell(row=current_row, column=10).value = item["quantity"]   # J列: 数量
+            ws.cell(row=current_row, column=11).value = "個"              # K列: 単位
+            ws.cell(row=current_row, column=12).value = item["unit_price"] # L列: 単価（数値で直書き）
+            ws.cell(row=current_row, column=15).value = item["amount"]     # O列: 金額（数値で直書き）
             current_row += 1
 
     buf = io.BytesIO()
