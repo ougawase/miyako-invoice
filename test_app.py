@@ -93,8 +93,9 @@ class TestExcelOutput(unittest.TestCase):
         self.assertNotIn(f"年{reiwa}年", title, f"件名に年が重複: {title}")
 
     def test_product_name_written_to_b_column(self):
-        """B列に商品名が書かれていること"""
-        self.assertEqual(self.ws.cell(row=ITEM_START, column=2).value, "ツナプレーン")
+        """B列に日付プレフィックス付きの商品名が書かれていること"""
+        val = self.ws.cell(row=ITEM_START, column=2).value
+        self.assertIn("ツナプレーン", val, f"B列に商品名がない: {val}")
 
     def test_quantity_written_to_j_column(self):
         """J列に数量が数値で書かれていること"""
@@ -118,9 +119,11 @@ class TestExcelOutput(unittest.TestCase):
         """K列に「個」が書かれていること"""
         self.assertEqual(self.ws.cell(row=ITEM_START, column=11).value, "個")
 
-    def test_delivery_date_label(self):
-        """A列の先頭行に日付ラベル（○月○日）が書かれていること"""
-        self.assertEqual(self.ws.cell(row=ITEM_START, column=1).value, "5月4日")
+    def test_sequential_no_in_a_column(self):
+        """A列に連番（1, 2, 3...）が書かれていること"""
+        self.assertEqual(self.ws.cell(row=ITEM_START,     column=1).value, 1)
+        self.assertEqual(self.ws.cell(row=ITEM_START + 1, column=1).value, 2)
+        self.assertEqual(self.ws.cell(row=ITEM_START + 2, column=1).value, 3)
 
     def test_full_calc_on_load(self):
         """Excel を開いたとき SUM 数式が自動再計算されること"""
@@ -202,18 +205,18 @@ class TestMultipleDates(unittest.TestCase):
         self.assertEqual(ws.cell(row=ITEM_START,     column=10).value, 35)
         self.assertEqual(ws.cell(row=ITEM_START + 1, column=10).value, 35)
 
-    def test_same_product_merged_within_same_date(self):
-        """同一日付の同一商品は合算されること"""
+    def test_same_product_not_merged_within_same_date(self):
+        """同一日付の同一商品でもマージされず別行に出力されること"""
         groups = [{"date": datetime(2026, 5, 4), "items": [
             make_item("ツナプレーン", 20),
             make_item("ツナプレーン", 15),
         ]}]
         ws = load_excel(create_invoice("テスト", groups, "5月分", "テスト"))
-        self.assertEqual(ws.cell(row=ITEM_START, column=10).value, 35)
-        self.assertIsNone(ws.cell(row=ITEM_START + 1, column=2).value)
+        self.assertEqual(ws.cell(row=ITEM_START,     column=10).value, 20)
+        self.assertEqual(ws.cell(row=ITEM_START + 1, column=10).value, 15)
 
-    def test_date_label_position_with_multiple_items(self):
-        """1日目が2商品なら2日目のラベルは ITEM_START+2 行目にあること"""
+    def test_b_column_contains_product_name_only(self):
+        """B列に商品名のみが入り、日付プレフィックスが付かないこと"""
         groups = [
             {"date": datetime(2026, 5, 4), "items": [
                 make_item("ツナプレーン", 35),
@@ -222,7 +225,7 @@ class TestMultipleDates(unittest.TestCase):
             {"date": datetime(2026, 5, 11), "items": [make_item("ツナおかず", 35)]},
         ]
         ws = load_excel(create_invoice("テスト", groups, "5月分", "テスト"))
-        self.assertEqual(ws.cell(row=ITEM_START + 2, column=1).value, "5月11日")
+        self.assertEqual(ws.cell(row=ITEM_START + 2, column=2).value, "ツナおかず")
 
     def test_amount_per_date_group_is_correct(self):
         """各日付グループの金額が正しく計算されること"""
@@ -254,11 +257,11 @@ class TestEdgeCases(unittest.TestCase):
         self.assertIsNone(ws.cell(row=ITEM_END + 1, column=2).value)
 
     def test_none_date_does_not_crash(self):
-        """日付 None でもクラッシュせず、A列が空欄になること"""
+        """日付 None でもクラッシュせず、B列が商品名のみ、A列が連番になること"""
         groups = [{"date": None, "items": [make_item("ツナプレーン", 35)]}]
         ws = load_excel(create_invoice("テスト", groups, "5月分", "テスト"))
         self.assertEqual(ws.cell(row=ITEM_START, column=2).value, "ツナプレーン")
-        self.assertIn(ws.cell(row=ITEM_START, column=1).value, [None, ""])
+        self.assertEqual(ws.cell(row=ITEM_START, column=1).value, 1)
 
     def test_empty_groups_does_not_crash(self):
         """グループが空でもクラッシュせず、明細行が空になること"""
@@ -287,83 +290,116 @@ class TestEdgeCases(unittest.TestCase):
 
 
 # ====================================================
-class TestZeroPriceDetection(unittest.TestCase):
-    """6. 単価不明・ゼロ価格の検出"""
+class TestNouhinRead(unittest.TestCase):
+    """6. 納品書読み取り（新仕様: B2=店舗名, B3=納品日, B9〜=明細, 単価はD列手入力）"""
 
-    def test_unknown_product_detected_in_read_result(self):
-        """価格マスタにない商品名は unknown_products に記録されること"""
-        import openpyxl, io, base64
-        from template_data import TEMPLATE_B64
-
-        # テスト用納品書を動的に作成
-        wb = openpyxl.load_workbook(io.BytesIO(base64.b64decode(TEMPLATE_B64)))
+    def _make_wb(self, store="テスト店舗", delivery_date=None, rows=None):
+        """テスト用納品書ワークブックをメモリ上に作成して bytes を返す。"""
+        from invoice import _N_STORE_ROW, _N_STORE_COL, _N_DATE_ROW, _N_DATE_COL, \
+            _N_ITEM_START, _N_COL_NAME, _N_COL_QTY, _N_COL_PRICE
+        wb = openpyxl.Workbook()
         ws = wb.active
-        ws["A3"] = "テスト店舗"
-        ws["N4"] = datetime(2026, 5, 4)
-        ws.cell(row=18, column=2).value  = "存在しない商品"  # 価格マスタにない
-        ws.cell(row=18, column=10).value = 10
+        ws.cell(row=_N_STORE_ROW, column=_N_STORE_COL).value = store
+        ws.cell(row=_N_DATE_ROW,  column=_N_DATE_COL).value  = delivery_date or datetime(2026, 5, 4)
+        for i, (name, qty, price) in enumerate(rows or []):
+            r = _N_ITEM_START + i
+            ws.cell(row=r, column=_N_COL_NAME).value  = name
+            ws.cell(row=r, column=_N_COL_QTY).value   = qty
+            ws.cell(row=r, column=_N_COL_PRICE).value = price
         buf = io.BytesIO(); wb.save(buf)
+        return buf.getvalue()
 
-        result = read_nouhinshо(buf.getvalue())
-        self.assertIsNotNone(result, "読み取り結果がNoneです")
-        self.assertIn("存在しない商品", result["unknown_products"],
-                      "単価不明の商品が unknown_products に記録されていません")
+    def test_normal_read(self):
+        """店舗名・納品日・商品名・数量・単価が正常に読み取れること"""
+        data = self._make_wb(rows=[("商品A", 3, 500), ("商品B", 2, 1000)])
+        result = read_nouhinshо(data)
+        self.assertNotIn("error", result, f"エラーが返りました: {result}")
+        self.assertEqual(result["store_name"], "テスト店舗")
+        self.assertEqual(len(result["items"]), 2)
+        self.assertEqual(result["items"][0]["amount"], 1500)
+        self.assertEqual(result["items"][1]["amount"], 2000)
+        self.assertEqual(result["subtotal"], 3500)
 
-    def test_known_product_not_in_unknown_list(self):
-        """価格マスタにある商品は unknown_products に入らないこと"""
-        import openpyxl, io, base64
-        from template_data import TEMPLATE_B64
+    def test_missing_store_name(self):
+        """店舗名が空なら error が返ること"""
+        data = self._make_wb(store="", rows=[("商品A", 1, 100)])
+        result = read_nouhinshо(data)
+        self.assertIn("error", result)
+        self.assertIn("B3", result["error"])
 
-        wb = openpyxl.load_workbook(io.BytesIO(base64.b64decode(TEMPLATE_B64)))
+    def test_missing_items(self):
+        """明細が空なら error が返ること"""
+        data = self._make_wb(rows=[])
+        result = read_nouhinshо(data)
+        self.assertIn("error", result)
+
+    def test_invalid_qty(self):
+        """数量が数値でない行は error を返すこと"""
+        data = self._make_wb(rows=[("商品A", "abc", 100)])
+        result = read_nouhinshо(data)
+        self.assertIn("error", result)
+
+    def test_invalid_price(self):
+        """単価が数値でない行は error を返すこと"""
+        data = self._make_wb(rows=[("商品A", 1, "未定")])
+        result = read_nouhinshо(data)
+        self.assertIn("error", result)
+
+    def test_missing_date_returns_warning(self):
+        """納品日未入力は error ではなく warnings に記録されること"""
+        from invoice import _N_STORE_ROW, _N_STORE_COL, _N_ITEM_START, \
+            _N_COL_NAME, _N_COL_QTY, _N_COL_PRICE
+        wb = openpyxl.Workbook()
         ws = wb.active
-        ws["A3"] = "テスト店舗"
-        ws["N4"] = datetime(2026, 5, 4)
-        ws.cell(row=18, column=2).value  = "ツナプレーン"
-        ws.cell(row=18, column=10).value = 35
+        ws.cell(row=_N_STORE_ROW, column=_N_STORE_COL).value = "テスト店舗"
+        # 納品日は意図的に空のまま
+        ws.cell(row=_N_ITEM_START, column=_N_COL_NAME).value  = "商品A"
+        ws.cell(row=_N_ITEM_START, column=_N_COL_QTY).value   = 1
+        ws.cell(row=_N_ITEM_START, column=_N_COL_PRICE).value = 100
         buf = io.BytesIO(); wb.save(buf)
-
         result = read_nouhinshо(buf.getvalue())
-        self.assertEqual(result["unknown_products"], [],
-                         f"既知商品が unknown_products にある: {result['unknown_products']}")
+        self.assertNotIn("error", result)
+        self.assertTrue(len(result["warnings"]) > 0, "納品日未入力なのに warnings が空です")
 
-    def test_zero_price_item_amount_is_zero(self):
-        """単価0の商品は金額も0になること（警告で気づけるよう）"""
-        item = {"name": "謎の商品", "unit_price": 0, "quantity": 10, "amount": 0}
-        self.assertEqual(item["unit_price"] * item["quantity"], item["amount"])
+    def test_amount_calculated_from_qty_and_price(self):
+        """amount = 数量 × 単価 で計算されること（E列の値に依存しない）"""
+        data = self._make_wb(rows=[("商品X", 7, 300)])
+        result = read_nouhinshо(data)
+        self.assertEqual(result["items"][0]["amount"], 2100)
 
 
 # ====================================================
 class TestDateHandling(unittest.TestCase):
     """7. 日付型のエッジケース"""
 
-    def test_date_object_produces_label(self):
-        """datetime.date 型（datetime のサブクラスでない）でも日付ラベルが出ること"""
+    def test_date_object_does_not_crash(self):
+        """datetime.date 型でもクラッシュせず、B列に商品名のみが入ること"""
         from datetime import date as date_cls
         groups = [{"date": date_cls(2026, 4, 6), "items": [make_item("ツナプレーン", 35)]}]
         ws = load_excel(create_invoice("テスト", groups, "4月分", "テスト"))
-        label = ws.cell(row=ITEM_START, column=1).value
-        self.assertEqual(label, "4月6日",
-                         f"date型の日付が空になっています: '{label}'")
+        self.assertEqual(ws.cell(row=ITEM_START, column=2).value, "ツナプレーン")
 
-    def test_read_all_16_rows(self):
-        """納品書が16商品（行18〜33）まで全て読めること"""
-        import openpyxl, io, base64
-        from template_data import TEMPLATE_B64
+    def test_read_many_rows(self):
+        """明細が20行あっても空行が来るまで全て読めること"""
+        from invoice import _N_STORE_ROW, _N_STORE_COL, _N_DATE_ROW, _N_DATE_COL, \
+            _N_ITEM_START, _N_COL_NAME, _N_COL_QTY, _N_COL_PRICE
 
-        wb = openpyxl.load_workbook(io.BytesIO(base64.b64decode(TEMPLATE_B64)))
+        n = 20
+        wb = openpyxl.Workbook()
         ws = wb.active
-        ws["A3"] = "テスト店舗"
-        ws["N4"] = datetime(2026, 5, 4)
-        # 16商品すべて記入
-        for i in range(16):
-            ws.cell(row=18 + i, column=2).value  = "ツナプレーン"
-            ws.cell(row=18 + i, column=10).value = 1
+        ws.cell(row=_N_STORE_ROW, column=_N_STORE_COL).value = "テスト店舗"
+        ws.cell(row=_N_DATE_ROW,  column=_N_DATE_COL).value  = datetime(2026, 5, 4)
+        for i in range(n):
+            r = _N_ITEM_START + i
+            ws.cell(row=r, column=_N_COL_NAME).value  = "商品"
+            ws.cell(row=r, column=_N_COL_QTY).value   = 1
+            ws.cell(row=r, column=_N_COL_PRICE).value = 100
         buf = io.BytesIO(); wb.save(buf)
 
         result = read_nouhinshо(buf.getvalue())
-        self.assertIsNotNone(result)
-        self.assertEqual(len(result["items"]), 16,
-                         f"16商品のうち{len(result['items'])}品しか読めていません（range(18,30)バグ）")
+        self.assertNotIn("error", result, f"読み取りエラー: {result}")
+        self.assertEqual(len(result["items"]), n,
+                         f"{n}商品のうち{len(result['items'])}品しか読めていません")
 
 
 # ====================================================
@@ -380,7 +416,7 @@ if __name__ == "__main__":
         TestExcelVerification,
         TestMultipleDates,
         TestEdgeCases,
-        TestZeroPriceDetection,
+        TestNouhinRead,
         TestDateHandling,
     ]:
         suite.addTests(loader.loadTestsFromTestCase(cls))
