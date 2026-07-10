@@ -5,6 +5,7 @@ import zipfile
 from datetime import date, datetime
 from invoice import (
     read_nouhinshо, create_invoice, verify_invoice_output,
+    apply_price_overrides,
     PRICE_MASTER, TAX_RATE, ITEM_START, ITEM_END,
 )
 
@@ -250,9 +251,8 @@ if st.button("請求書を生成する", type="primary", use_container_width=Tru
         st.warning("納品書ファイルをアップロードしてください")
         st.stop()
 
-    store_data       = {}
-    errors           = []
-    unknown_warnings = []  # 単価不明の商品
+    store_data = {}
+    errors     = []
 
     progress = st.progress(0, text="読み取り中...")
     for i, f in enumerate(uploaded_files):
@@ -261,11 +261,6 @@ if st.button("請求書を生成する", type="primary", use_container_width=Tru
         if result is None:
             errors.append(f.name)
             continue
-
-        # 単価が不明な商品を記録
-        for prod in result.get("unknown_products", []):
-            unknown_warnings.append(f"{f.name} → 「{prod}」（単価¥0）")
-
         store = result["store_name"]
         if store not in store_data:
             store_data[store] = {"dated_groups": []}
@@ -274,20 +269,46 @@ if st.button("請求書を生成する", type="primary", use_container_width=Tru
             "items": result["items"],
         })
     progress.empty()
+    # 結果はセッションに保存し、ボタンの外で描画する。単価の入力・確認・
+    # ダウンロードが再実行（入力のたびに起きる）をまたいで消えないようにするため。
+    st.session_state["gen"] = {"store_data": store_data, "errors": errors}
 
-    # 単価不明の商品が1件でもあれば強制停止
-    if unknown_warnings:
-        st.error("⚠️ 単価が不明な商品が見つかりました。請求書を作成できません。")
-        for w in unknown_warnings:
-            st.error(f"　{w}")
-        st.caption("価格マスタ（テンプレートのV6:W11）に商品名を追加するか、納品書の商品名を確認してください。")
-        st.stop()
-
-    if errors:
-        st.warning(f"読み取れなかったファイル: {', '.join(errors)}")
-    if not store_data:
+gen = st.session_state.get("gen")
+if gen:
+    if gen["errors"]:
+        st.warning(f"読み取れなかったファイル: {', '.join(gen['errors'])}")
+    if not gen["store_data"]:
         st.error("データを抽出できませんでした")
         st.stop()
+
+    # 価格表にない商品は単価0で読まれている。以前は1件でも全体を止めていたが、
+    # 「その場で単価を入れて続行」に変更（2026-07-09。"ただ入れれば請求書になる"に戻す）。
+    # 単価0のまま請求書を作らないことは、下の入力必須チェックで引き続き担保する。
+    unknown_names = []
+    for data in gen["store_data"].values():
+        for g in data["dated_groups"]:
+            for it in g["items"]:
+                if it["unit_price"] == 0 and it["name"] not in unknown_names:
+                    unknown_names.append(it["name"])
+
+    overrides = {}
+    if unknown_names:
+        st.write("")
+        st.markdown('<p class="section-label">単価の入力</p>', unsafe_allow_html=True)
+        st.warning("価格表にない商品がありました。単価（税抜・円）を入れると、そのまま請求書を作成できます。")
+        _pcols = st.columns(2)
+        for _i, _nm in enumerate(unknown_names):
+            with _pcols[_i % 2]:
+                overrides[_nm] = int(st.number_input(
+                    f"「{_nm}」の単価", min_value=0, step=10, key=f"pfx_{_nm}"))
+        _missing = [nm for nm in unknown_names if not overrides.get(nm)]
+        if _missing:
+            st.info("単価が未入力：" + "、".join(_missing)
+                    + "　（すべて入れると、内容確認とダウンロードが表示されます）")
+            st.stop()
+
+    store_data = (apply_price_overrides(gen["store_data"], overrides)
+                  if unknown_names else gen["store_data"])
 
     st.write("")
     st.markdown('<p class="section-label">内容確認</p>', unsafe_allow_html=True)

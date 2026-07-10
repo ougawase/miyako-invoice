@@ -394,3 +394,42 @@ if __name__ == "__main__":
         print(f"❌ 失敗: {len(result.failures)} 件  エラー: {len(result.errors)} 件")
         print("デプロイ前に修正してください")
     print("=" * 60)
+
+
+# ── 単価その場入力（2026-07-09：強制停止をやめ、入力して続行できるように） ──
+
+def _sd(price=0):
+    return {"店A": {"dated_groups": [
+        {"date": date(2026, 7, 1), "items": [
+            {"name": "ツナ新味", "unit_price": price, "quantity": 3,
+             "amount": price * 3},
+            {"name": "ツナプレーン", "unit_price": 520, "quantity": 2,
+             "amount": 1040}]}]}}
+
+
+def test_apply_price_overrides_fills_only_zero_price_items():
+    from invoice import apply_price_overrides
+    fixed = apply_price_overrides(_sd(), {"ツナ新味": 600})
+    items = fixed["店A"]["dated_groups"][0]["items"]
+    assert items[0]["unit_price"] == 600 and items[0]["amount"] == 1800
+    assert items[1]["unit_price"] == 520 and items[1]["amount"] == 1040  # 既存単価は不変
+
+
+def test_apply_price_overrides_ignores_zero_or_missing_override():
+    from invoice import apply_price_overrides
+    src = _sd()
+    fixed = apply_price_overrides(src, {"ツナ新味": 0})
+    assert fixed["店A"]["dated_groups"][0]["items"][0]["unit_price"] == 0
+    fixed2 = apply_price_overrides(src, {})
+    assert fixed2["店A"]["dated_groups"][0]["items"][0]["unit_price"] == 0
+    # 元データが変更されていない（deepcopy）
+    assert src["店A"]["dated_groups"][0]["items"][0]["unit_price"] == 0
+
+
+def test_apply_price_overrides_does_not_touch_known_price_even_if_named():
+    """価格表で引けた商品と同名のoverrideがあっても、単価>0の明細は変えない。"""
+    from invoice import apply_price_overrides
+    fixed = apply_price_overrides(_sd(price=500), {"ツナ新味": 999, "ツナプレーン": 999})
+    items = fixed["店A"]["dated_groups"][0]["items"]
+    assert items[0]["unit_price"] == 500
+    assert items[1]["unit_price"] == 520
