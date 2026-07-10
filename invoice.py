@@ -88,6 +88,25 @@ def read_nouhinshо(file_bytes):
     }
 
 
+def apply_price_overrides(store_data, overrides):
+    """単価0（価格表になかった商品）の明細に、ユーザーが入力した単価を適用して
+    金額を再計算した store_data のコピーを返す。元のデータは変更しない。
+
+    overrides: {商品名: 単価(int)}。0以下の単価は適用しない（未入力扱い）。
+    単価が既に入っている明細（価格表で引けた商品）には一切触れない。
+    """
+    import copy
+    fixed = copy.deepcopy(store_data)
+    for data in fixed.values():
+        for group in data["dated_groups"]:
+            for item in group["items"]:
+                price = overrides.get(item["name"], 0)
+                if item["unit_price"] == 0 and price and price > 0:
+                    item["unit_price"] = int(price)
+                    item["amount"] = item["unit_price"] * item["quantity"]
+    return fixed
+
+
 def create_invoice(store_name, dated_groups, billing_month, billing_subject):
     """
     テンプレートから請求書Excelを生成して bytes で返す。
